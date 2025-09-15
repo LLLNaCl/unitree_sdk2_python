@@ -13,6 +13,7 @@ class Config:
         self.ROOT_DIR = Path(__file__).parent.parent.parent
         
         # 设备信息
+        self.NETWORK_INTERFACE = os.environ.get("NETWORK_INTERFACE", "eth0")
         self.DEVICE_ID = os.environ.get("B2_DEVICE_ID", "b2_default_001")
         self.DEVICE_NAME = os.environ.get("B2_DEVICE_NAME", "Unitree B2 Robot Dog")
         self.FIRMWARE_VERSION = "1.0.0"
@@ -42,6 +43,7 @@ class Config:
     def to_dict(self):
         """将配置转换为字典"""
         return {
+            "network_interface": self.NETWORK_INTERFACE,
             "device_id": self.DEVICE_ID,
             "device_name": self.DEVICE_NAME,
             "firmware_version": self.FIRMWARE_VERSION,
