@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>宇树机器狗B2代码封装方案 - 可视化报告</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    
+    <!-- 内联数据区 -->
+    <script>
+        // 功能需求数据
+        const functionRequirements = [
+            {
+                "一级功能": "工作台总览",
+                "二级功能": "/",
+                "功能说明": "集中展示所有接入设备的状态、任务执行进度以及资源分布情况",
+                "实现方式": "在实现设备管理、任务管理、设备监管的基础上，调用数据流即可",
+                "难度": "低"
+            },
+            {
+                "一级功能": "设备管理",
+                "二级功能": "机器人管理",
+                "功能说明": "对机器人设备进行在线注册以及状态监测，包括机器人的当前任务状态、电量、运行健康度等关键指标",
+                "实现方式": "状态检测由1-3实现；任务分配后、远程操控时的运动控制和运动状态获取由4实现；在线注册由5实现",
+                "难度": "低"
+            },
+            {
+                "一级功能": "设备管理",
+                "二级功能": "LLM管理",
+                "功能说明": "支持对大型语言模块进行管理，支持对模型能力的动态扩展与定制化配置",
+                "实现方式": "通过宇树提供的API实现LLM模型的加载、配置与调用",
+                "难度": "高"
+            },
+            {
+                "一级功能": "设备管理",
+                "二级功能": "动作管理",
+                "功能说明": "支持对具身智能设备的各类动作行为进行统一配置与管理",
+                "实现方式": "基于宇树运动控制API进行封装，实现动作参数标准化",
+                "难度": "高"
+            },
+            {
+                "一级功能": "设备管理",
+                "二级功能": "地图管理",
+                "功能说明": "支持对设备运行环境的空间信息进行统一管理和可视化展示",
+                "实现方式": "集成SLAM算法，实现地图创建、更新和导航功能",
+                "难度": "高"
+            },
+            {
+                "一级功能": "设备管理",
+                "二级功能": "设备注册",
+                "功能说明": "支持新设备的接入与注册，包括设备信息录入、认证授权等功能",
+                "实现方式": "基于设备ID和硬件信息实现注册流程，结合MQTT协议",
+                "难度": "低"
+            },
+            {
+                "一级功能": "任务管理",
+                "二级功能": "任务创建",
+                "功能说明": "支持用户创建各类任务，如巡逻、导航、特定动作执行等",
+                "实现方式": "设计任务数据结构，实现任务参数标准化",
+                "难度": "无"
+            },
+            {
+                "一级功能": "任务管理",
+                "二级功能": "任务分配",
+                "功能说明": "将创建的任务分配给指定的机器人设备执行",
+                "实现方式": "基于MQTT消息协议实现任务下发机制",
+                "难度": "无"
+            },
+            {
+                "一级功能": "任务管理",
+                "二级功能": "任务执行",
+                "功能说明": "监控任务的执行过程，实时反馈任务状态",
+                "实现方式": "实现任务状态跟踪和进度汇报机制",
+                "难度": "低"
+            },
+            {
+                "一级功能": "任务管理",
+                "二级功能": "任务取消",
+                "功能说明": "支持用户随时取消正在执行的任务",
+                "实现方式": "设计任务中断和清理机制",
+                "难度": "无"
+            },
+            {
+                "一级功能": "任务管理",
+                "二级功能": "任务优先级",
+                "功能说明": "支持设置任务的优先级，高优先级任务可以打断低优先级任务",
+                "实现方式": "实现任务优先级调度算法",
+                "难度": "中"
+            },
+            {
+                "一级功能": "设备监管",
+                "二级功能": "设备状态",
+                "功能说明": "实时监控设备的运行状态，包括电量、网络、CPU使用率等",
+                "实现方式": "基于宇树RobotStateClient获取设备状态信息",
+                "难度": "无"
+            },
+            {
+                "一级功能": "设备监管",
+                "二级功能": "健康监测",
+                "功能说明": "对设备的健康状态进行评估，包括电机状态、传感器状态等",
+                "实现方式": "实现健康状态评估算法，结合传感器数据",
+                "难度": "低"
+            },
+            {
+                "一级功能": "设备监管",
+                "二级功能": "异常报警",
+                "功能说明": "当设备出现异常时，及时向控制台发送报警信息",
+                "实现方式": "设计异常检测和报警机制",
+                "难度": "低"
+            },
+            {
+                "一级功能": "远程操控",
+                "二级功能": "基础控制",
+                "功能说明": "支持对设备进行基础的远程控制，如前进、后退、左转、右转等",
+                "实现方式": "封装宇树运动控制API，实现标准化控制命令",
+                "难度": "无"
+            },
+            {
+                "一级功能": "远程操控",
+                "二级功能": "姿态控制",
+                "功能说明": "支持对设备的姿态进行控制，如站立、蹲下、跳跃等",
+                "实现方式": "基于宇树SDK实现姿态控制功能",
+                "难度": "低"
+            },
+            {
+                "一级功能": "远程操控",
+                "二级功能": "速度控制",
+                "功能说明": "支持对设备的运动速度进行调节",
+                "实现方式": "实现速度控制接口，调节运动参数",
+                "难度": "无"
+            },
+            {
+                "一级功能": "视频监控",
+                "二级功能": "实时视频",
+                "功能说明": "通过RTSP协议传输实时视频流，支持控制台查看",
+                "实现方式": "使用ffmpeg推流，实现RTSP视频流传输",
+                "难度": "中"
+            },
+            {
+                "一级功能": "视频监控",
+                "二级功能": "视频录制",
+                "功能说明": "支持视频录制和回放功能",
+                "实现方式": "实现视频录制和存储功能",
+                "难度": "低"
+            },
+            {
+                "一级功能": "系统设置",
+                "二级功能": "网络配置",
+                "功能说明": "支持对设备的网络参数进行配置，包括WiFi和4G网络",
+                "实现方式": "实现网络配置管理模块，支持WiFi和4G切换",
+                "难度": "低"
+            }
+        ];
+
+        // 模块划分数据
+        const moduleData = [
+            {
+                "模块名称": "设备管理模块",
+                "功能数量": 5,
+                "包含功能": ["机器人管理", "LLM管理", "动作管理", "地图管理", "设备注册"],
+                "难度级别": "中高",
+                "优先级": "高"
+            },
+            {
+                "模块名称": "任务管理模块",
+                "功能数量": 5,
+                "包含功能": ["任务创建", "任务分配", "任务执行", "任务取消", "任务优先级"],
+                "难度级别": "低",
+                "优先级": "高"
+            },
+            {
+                "模块名称": "动作控制模块",
+                "功能数量": 3,
+                "包含功能": ["基础控制", "姿态控制", "速度控制"],
+                "难度级别": "中",
+                "优先级": "高"
+            },
+            {
+                "模块名称": "设备监管模块",
+                "功能数量": 3,
+                "包含功能": ["设备状态", "健康监测", "异常报警"],
+                "难度级别": "低",
+                "优先级": "中"
+            },
+            {
+                "模块名称": "视频监控模块",
+                "功能数量": 2,
+                "包含功能": ["实时视频", "视频录制"],
+                "难度级别": "中",
+                "优先级": "中"
+            },
+            {
+                "模块名称": "系统设置模块",
+                "功能数量": 1,
+                "包含功能": ["网络配置"],
+                "难度级别": "低",
+                "优先级": "中"
+            },
+            {
+                "模块名称": "通信模块",
+                "功能数量": 1,
+                "包含功能": ["MQTT通信"],
+                "难度级别": "中",
+                "优先级": "高"
+            }
+        ];
+
+        // 难度分布数据
+        const difficultyData = {
+            "低": 7,
+            "无": 6,
+            "高": 5,
+            "中": 2
+        };
+
+        // 部署流程数据
+        const deploymentSteps = [
+            {
+                "step": 1,
+                "title": "环境准备",
+                "description": "安装依赖库、配置网络、安装4G模块驱动",
+                "duration": "1天",
+                "status": "必要"
+            },
+            {
+                "step": 2,
+                "title": "模块开发",
+                "description": "实现7个核心模块的功能开发",
+                "duration": "2周",
+                "status": "必要"
+            },
+            {
+                "step": 3,
+                "title": "集成测试",
+                "description": "进行模块间集成测试和系统测试",
+                "duration": "1周",
+                "status": "必要"
+            },
+            {
+                "step": 4,
+                "title": "性能优化",
+                "description": "优化系统性能和资源占用",
+                "duration": "3天",
+                "status": "可选"
+            },
+            {
+                "step": 5,
+                "title": "部署上线",
+                "description": "配置系统服务和自动启动",
+                "duration": "1天",
+                "status": "必要"
+            }
+        ];
+    </script>
+</head>
+<body class="bg-gradient-to-br from-slate-50 to-blue-50 min-h-screen">
+    <!-- 页面头部 -->
+    <header class="bg-white shadow-lg border-b border-blue-100">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <div class="bg-blue-600 p-3 rounded-xl">
+                        <i class="fas fa-robot text-white text-2xl"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-3xl font-bold text-gray-900">宇树机器狗B2代码封装方案</h1>
+                        <p class="text-gray-600 mt-1">云端控制台调用架构可视化报告</p>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <div class="text-sm text-gray-500">生成时间</div>
+                    <div class="text-lg font-semibold text-gray-900" id="currentTime"></div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- 概览统计卡片 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="bg-white rounded-xl shadow-lg p-6 border border-blue-100 hover:shadow-xl transition-shadow duration-300">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">功能需求总数</p>
+                        <p class="text-3xl font-bold text-blue-600">20</p>
+                    </div>
+                    <div class="bg-blue-100 p-3 rounded-lg">
+                        <i class="fas fa-tasks text-blue-600 text-xl"></i>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-xl shadow-lg p-6 border border-green-100 hover:shadow-xl transition-shadow duration-300">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">核心模块数</p>
+                        <p class="text-3xl font-bold text-green-600">7</p>
+                    </div>
+                    <div class="bg-green-100 p-3 rounded-lg">
+                        <i class="fas fa-cubes text-green-600 text-xl"></i>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-xl shadow-lg p-6 border border-purple-100 hover:shadow-xl transition-shadow duration-300">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">高难度功能</p>
+                        <p class="text-3xl font-bold text-purple-600">5</p>
+                    </div>
+                    <div class="bg-purple-100 p-3 rounded-lg">
+                        <i class="fas fa-exclamation-triangle text-purple-600 text-xl"></i>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-xl shadow-lg p-6 border border-orange-100 hover:shadow-xl transition-shadow duration-300">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">预计开发周期</p>
+                        <p class="text-3xl font-bold text-orange-600">4周</p>
+                    </div>
+                    <div class="bg-orange-100 p-3 rounded-lg">
+                        <i class="fas fa-calendar-alt text-orange-600 text-xl"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 系统架构图 -->
+        <div class="bg-white rounded-xl shadow-lg p-8 mb-8 border border-gray-100">
+            <div class="flex items-center mb-6">
+                <div class="bg-blue-600 p-2 rounded-lg mr-4">
+                    <i class="fas fa-project-diagram text-white"></i>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-900">系统架构设计</h2>
+            </div>
+            
+            <div class="bg-gray-50 rounded-lg p-6 overflow-x-auto">
+                <div id="architectureDiagram" class="min-w-[800px]"></div>
+            </div>
+        </div>
+
+        <!-- 图表区域 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            <!-- 功能模块分布 -->
+            <div class="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+                <div class="flex items-center mb-6">
+                    <div class="bg-green-600 p-2 rounded-lg mr-4">
+                        <i class="fas fa-chart-pie text-white"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-gray-900">功能模块分布</h3>
+                </div>
+                <div class="relative h-80">
+                    <canvas id="moduleChart"></canvas>
+                </div>
+            </div>
+
+            <!-- 实现难度分析 -->
+            <div class="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+                <div class="flex items-center mb-6">
+                    <div class="bg-purple-600 p-2 rounded-lg mr-4">
+                        <i class="fas fa-chart-bar text-white"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-gray-900">实现难度分析</h3>
+                </div>
+                <div class="relative h-80">
+                    <canvas id="difficultyChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 模块详细信息 -->
+        <div class="bg-white rounded-xl shadow-lg p-8 mb-8 border border-gray-100">
+            <div class="flex items-center mb-6">
+                <div class="bg-indigo-600 p-2 rounded-lg mr-4">
+                    <i class="fas fa-list-alt text-white"></i>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-900">核心模块详情</h2>
+            </div>
+            
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">模块名称</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">功能数量</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">包含功能</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">难度级别</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">优先级</th>
+                        </tr>
+                    </thead>
+                    <tbody id="moduleTable" class="bg-white divide-y divide-gray-200">
+                        <!-- 表格内容将通过JavaScript动态生成 -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 部署流程时间线 -->
+        <div class="bg-white rounded-xl shadow-lg p-8 mb-8 border border-gray-100">
+            <div class="flex items-center mb-6">
+                <div class="bg-orange-600 p-2 rounded-lg mr-4">
+                    <i class="fas fa-timeline text-white"></i>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-900">部署流程时间线</h2>
+            </div>
+            
+            <div id="timeline" class="relative">
+                <!-- 时间线内容将通过JavaScript动态生成 -->
+            </div>
+        </div>
+
+        <!-- MQTT消息协议设计 -->
+        <div class="bg-white rounded-xl shadow-lg p-8 mb-8 border border-gray-100">
+            <div class="flex items-center mb-6">
+                <div class="bg-red-600 p-2 rounded-lg mr-4">
+                    <i class="fas fa-exchange-alt text-white"></i>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-900">MQTT消息协议设计</h2>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- 上行消息 -->
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                        <i class="fas fa-arrow-up text-green-500 mr-2"></i>
+                        设备到云端 (上行)
+                    </h3>
+                    <div class="space-y-4">
+                        <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                            <div class="font-mono text-sm text-green-800">device/{device_id}/status</div>
+                            <div class="text-xs text-gray-600 mt-1">设备状态上报</div>
+                        </div>
+                        <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                            <div class="font-mono text-sm text-green-800">device/{device_id}/telemetry</div>
+                            <div class="text-xs text-gray-600 mt-1">遥测数据上报</div>
+                        </div>
+                        <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                            <div class="font-mono text-sm text-green-800">device/{device_id}/task/result</div>
+                            <div class="text-xs text-gray-600 mt-1">任务执行结果</div>
+                        </div>
+                        <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                            <div class="font-mono text-sm text-green-800">device/{device_id}/event</div>
+                            <div class="text-xs text-gray-600 mt-1">设备事件通知</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 下行消息 -->
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                        <i class="fas fa-arrow-down text-blue-500 mr-2"></i>
+                        云端到设备 (下行)
+                    </h3>
+                    <div class="space-y-4">
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <div class="font-mono text-sm text-blue-800">device/{device_id}/command</div>
+                            <div class="text-xs text-gray-600 mt-1">控制命令</div>
+                        </div>
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <div class="font-mono text-sm text-blue-800">device/{device_id}/task</div>
+                            <div class="text-xs text-gray-600 mt-1">任务分配</div>
+                        </div>
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <div class="font-mono text-sm text-blue-800">device/{device_id}/config</div>
+                            <div class="text-xs text-gray-600 mt-1">配置更新</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 消息格式示例 -->
+            <div class="mt-8">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">消息格式示例</h3>
+                <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <pre class="text-sm font-mono text-gray-800 overflow-x-auto"><code>{
+  "message_id": "cmd-12345",
+  "timestamp": 1620000001,
+  "command": "move",
+  "parameters": {
+    "direction": "forward",
+    "distance": 1.5,
+    "speed": 0.5
+  },
+  "priority": 1,
+  "timeout": 10
+}</code></pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- 关键技术总结 -->
+        <div class="bg-white rounded-xl shadow-lg p-8 border border-gray-100">
+            <div class="flex items-center mb-6">
+                <div class="bg-teal-600 p-2 rounded-lg mr-4">
+                    <i class="fas fa-lightbulb text-white"></i>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-900">关键技术总结</h2>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="bg-blue-50 rounded-lg p-6 border border-blue-100">
+                    <div class="flex items-center mb-4">
+                        <div class="bg-blue-600 p-2 rounded-lg mr-3">
+                            <i class="fas fa-wifi text-white"></i>
+                        </div>
+                        <h3 class="text-lg font-semibold text-blue-900">网络通信</h3>
+                    </div>
+                    <ul class="text-sm text-blue-800 space-y-2">
+                        <li>• MQTT 5.0 协议</li>
+                        <li>• 4G + WiFi 双备份</li>
+                        <li>• TLS/SSL 加密通信</li>
+                        <li>• 自动网络切换机制</li>
+                    </ul>
+                </div>
+                
+                <div class="bg-green-50 rounded-lg p-6 border border-green-100">
+                    <div class="flex items-center mb-4">
+                        <div class="bg-green-600 p-2 rounded-lg mr-3">
+                            <i class="fas fa-video text-white"></i>
+                        </div>
+                        <h3 class="text-lg font-semibold text-green-900">视频监控</h3>
+                    </div>
+                    <ul class="text-sm text-green-800 space-y-2">
+                        <li>• RTSP 视频流协议</li>
+                        <li>• FFmpeg 推流技术</li>
+                        <li>• 视频录制与存储</li>
+                        <li>• 动态码率调整</li>
+                    </ul>
+                </div>
+                
+                <div class="bg-purple-50 rounded-lg p-6 border border-purple-100">
+                    <div class="flex items-center mb-4">
+                        <div class="bg-purple-600 p-2 rounded-lg mr-3">
+                            <i class="fas fa-shield-alt text-white"></i>
+                        </div>
+                        <h3 class="text-lg font-semibold text-purple-900">安全机制</h3>
+                    </div>
+                    <ul class="text-sm text-purple-800 space-y-2">
+                        <li>• 设备ID + Token认证</li>
+                        <li>• 消息签名与验证</li>
+                        <li>• JWT 令牌管理</li>
+                        <li>• 访问控制策略</li>
+                    </ul>
+                </div>
+                
+                <div class="bg-orange-50 rounded-lg p-6 border border-orange-100">
+                    <div class="flex items-center mb-4">
+                        <div class="bg-orange-600 p-2 rounded-lg mr-3">
+                            <i class="fas fa-sync-alt text-white"></i>
+                        </div>
+                        <h3 class="text-lg font-semibold text-orange-900">错误恢复</h3>
+                    </div>
+                    <ul class="text-sm text-orange-800 space-y-2">
+                        <li>• 多级错误处理</li>
+                        <li>• 自动重试机制</li>
+                        <li>• 故障转移策略</li>
+                        <li>• 紧急停止功能</li>
+                    </ul>
+                </div>
+                
+                <div class="bg-red-50 rounded-lg p-6 border border-red-100">
+                    <div class="flex items-center mb-4">
+                        <div class="bg-red-600 p-2 rounded-lg mr-3">
+                            <i class="fas fa-cogs text-white"></i>
+                        </div>
+                        <h3 class="text-lg font-semibold text-red-900">模块化设计</h3>
+                    </div>
+                    <ul class="text-sm text-red-800 space-y-2">
+                        <li>• 松耦合架构</li>
+                        <li>• 标准化API接口</li>
+                        <li>• 插件式扩展</li>
+                        <li>• 易于维护升级</li>
+                    </ul>
+                </div>
+                
+                <div class="bg-teal-50 rounded-lg p-6 border border-teal-100">
+                    <div class="flex items-center mb-4">
+                        <div class="bg-teal-600 p-2 rounded-lg mr-3">
+                            <i class="fas fa-tasks text-white"></i>
+                        </div>
+                        <h3 class="text-lg font-semibold text-teal-900">任务管理</h3>
+                    </div>
+                    <ul class="text-sm text-teal-800 space-y-2">
+                        <li>• 优先级调度</li>
+                        <li>• 任务队列管理</li>
+                        <li>• 进度跟踪</li>
+                        <li>• 异常处理机制</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="bg-white border-t border-gray-200 mt-12">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <div class="text-center text-gray-500">
+                <p>宇树机器狗B2代码封装方案 - 云端控制台调用架构</p>
+                <p class="text-sm mt-1">本方案提供完整的代码封装架构，实现机器狗与云端控制台的无缝对接</p>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // 设置当前时间
+        document.getElementById('currentTime').textContent = new Date().toLocaleString('zh-CN');
+
+        // 初始化架构图
+        function initArchitectureDiagram() {
+            const svg = d3.select("#architectureDiagram")
+                .append("svg")
+                .attr("width", 800)
+                .attr("height", 500);
+
+            // 定义节点
+            const nodes = [
+                { id: "console", label: "云端控制台", x: 100, y: 50, color: "#3B82F6" },
+                { id: "mqtt", label: "MQTT服务器", x: 300, y: 50, color: "#10B981" },
+                { id: "network", label: "4G模块/网络", x: 500, y: 50, color: "#F59E0B" },
+                { id: "rtsp_player", label: "RTSP播放器", x: 100, y: 250, color: "#8B5CF6" },
+                { id: "rtsp_server", label: "RTSP服务器", x: 300, y: 250, color: "#EC4899" },
+                { id: "robot", label: "机器狗B2本体", x: 500, y: 150, color: "#EF4444" },
+                { id: "sdk_wrapper", label: "封装SDK层", x: 500, y: 250, color: "#6366F1" },
+                { id: "original_sdk", label: "宇树原始SDK", x: 500, y: 350, color: "#14B8A6" }
+            ];
+
+            // 定义连接
+            const links = [
+                { source: "console", target: "mqtt", label: "MQTT" },
+                { source: "mqtt", target: "network", label: "MQTT" },
+                { source: "network", target: "robot", label: "TCP/IP" },
+                { source: "rtsp_player", target: "rtsp_server", label: "RTSP" },
+                { source: "rtsp_server", target: "robot", label: "RTSP" },
+                { source: "robot", target: "sdk_wrapper", label: "API调用" },
+                { source: "sdk_wrapper", target: "original_sdk", label: "API调用" }
+            ];
+
+            // 绘制连接线
+            svg.selectAll("line")
+                .data(links)
+                .enter()
+                .append("line")
+                .attr("x1", d => nodes.find(n => n.id === d.source).x)
+                .attr("y1", d => nodes.find(n => n.id === d.source).y)
+                .attr("x2", d => nodes.find(n => n.id === d.target).x)
+                .attr("y2", d => nodes.find(n => n.id === d.target).y)
+                .attr("stroke", "#CBD5E1")
+                .attr("stroke-width", 2);
+
+            // 绘制连接标签
+            svg.selectAll("text.link-label")
+                .data(links)
+                .enter()
+                .append("text")
+                .attr("class", "link-label")
+                .attr("x", d => (nodes.find(n => n.id === d.source).x + nodes.find(n => n.id === d.target).x) / 2)
+                .attr("y", d => (nodes.find(n => n.id === d.source).y + nodes.find(n => n.id === d.target).y) / 2 - 5)
+                .attr("text-anchor", "middle")
+                .attr("fill", "#64748B")
+                .attr("font-size", "12px")
+                .attr("font-weight", "bold")
+                .text(d => d.label);
+
+            // 绘制节点
+            const nodeGroups = svg.selectAll("g.node")
+                .data(nodes)
+                .enter()
+                .append("g")
+                .attr("class", "node")
+                .attr("transform", d => `translate(${d.x}, ${d.y})`);
+
+            nodeGroups.append("rect")
+                .attr("width", d => Math.max(d.label.length * 8, 80))
+                .attr("height", 40)
+                .attr("x", d => -Math.max(d.label.length * 4, 40))
+                .attr("y", -20)
+                .attr("rx", 8)
+                .attr("ry", 8)
+                .attr("fill", d => d.color)
+                .attr("opacity", 0.8);
+
+            nodeGroups.append("text")
+                .attr("text-anchor", "middle")
+                .attr("dominant-baseline", "middle")
+                .attr("fill", "white")
+                .attr("font-size", "12px")
+                .attr("font-weight", "bold")
+                .text(d => d.label);
+        }
+
+        // 初始化模块分布饼图
+        function initModuleChart() {
+            const ctx = document.getElementById('moduleChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: moduleData.map(m => m.模块名称),
+                    datasets: [{
+                        data: moduleData.map(m => m.功能数量),
+                        backgroundColor: [
+                            '#3B82F6', '#10B981', '#F59E0B', '#EF4444',
+                            '#8B5CF6', '#EC4899', '#14B8A6'
+                        ],
+                        borderWidth: 2,
+                        borderColor: '#ffffff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                padding: 20,
+                                usePointStyle: true
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const module = moduleData[context.dataIndex];
+                                    return `${module.模块名称}: ${module.功能数量}个功能`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 初始化难度分析柱状图
+        function initDifficultyChart() {
+            const ctx = document.getElementById('difficultyChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(difficultyData),
+                    datasets: [{
+                        label: '功能数量',
+                        data: Object.values(difficultyData),
+                        backgroundColor: [
+                            '#10B981', '#3B82F6', '#EF4444', '#F59E0B'
+                        ],
+                        borderRadius: 8,
+                        borderSkipped: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 1
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 初始化模块表格
+        function initModuleTable() {
+            const tbody = document.getElementById('moduleTable');
+            tbody.innerHTML = '';
+
+            moduleData.forEach(module => {
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-50 transition-colors duration-200';
+                
+                const difficultyColors = {
+                    '低': 'bg-green-100 text-green-800',
+                    '中': 'bg-yellow-100 text-yellow-800',
+                    '高': 'bg-red-100 text-red-800',
+                    '中高': 'bg-orange-100 text-orange-800'
+                };
+                
+                const priorityColors = {
+                    '高': 'bg-red-100 text-red-800',
+                    '中': 'bg-yellow-100 text-yellow-800',
+                    '低': 'bg-green-100 text-green-800'
+                };
+
+                row.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm font-medium text-gray-900">${module.模块名称}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm text-gray-900">${module.功能数量}</div>
+                    </td>
+                    <td class="px-6 py-4">
+                        <div class="text-sm text-gray-900">
+                            ${module.包含功能.map(func => `<span class="inline-block bg-gray-100 rounded-full px-2 py-1 text-xs mr-1 mb-1">${func}</span>`).join('')}
+                        </div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${difficultyColors[module.难度级别]}">
+                            ${module.难度级别}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${priorityColors[module.优先级]}">
+                            ${module.优先级}
+                        </span>
+                    </td>
+                `;
+                
+                tbody.appendChild(row);
+            });
+        }
+
+        // 初始化部署时间线
+        function initTimeline() {
+            const timeline = document.getElementById('timeline');
+            timeline.innerHTML = '';
+
+            deploymentSteps.forEach((step, index) => {
+                const stepElement = document.createElement('div');
+                stepElement.className = 'flex items-start mb-8 relative';
+                
+                const statusColor = step.status === '必要' ? 'bg-red-500' : 'bg-blue-500';
+                
+                stepElement.innerHTML = `
+                    <div class="flex-shrink-0">
+                        <div class="w-10 h-10 rounded-full ${statusColor} flex items-center justify-center text-white font-bold">
+                            ${step.step}
+                        </div>
+                    </div>
+                    <div class="ml-4 flex-grow">
+                        <div class="bg-white rounded-lg p-4 shadow border border-gray-100">
+                            <div class="flex justify-between items-center mb-2">
+                                <h3 class="text-lg font-semibold text-gray-900">${step.title}</h3>
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColor.replace('bg-', 'bg-opacity-10 text-')}">
+                                    ${step.status}
+                                </span>
+                            </div>
+                            <p class="text-sm text-gray-600 mb-2">${step.description}</p>
+                            <div class="text-xs text-gray-500">预计耗时: ${step.duration}</div>
+                        </div>
+                    </div>
+                    ${index < deploymentSteps.length - 1 ? '<div class="absolute left-5 top-10 bottom-0 w-0.5 bg-gray-200"></div>' : ''}
+                `;
+                
+                timeline.appendChild(stepElement);
+            });
+        }
+
+        // 页面加载完成后初始化所有图表
+        document.addEventListener('DOMContentLoaded', function() {
+            initArchitectureDiagram();
+            initModuleChart();
+            initDifficultyChart();
+            initModuleTable();
+            initTimeline();
+        });
+    </script>
+</body>
+</html>
