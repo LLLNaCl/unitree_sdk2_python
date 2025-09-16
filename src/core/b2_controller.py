@@ -9,20 +9,27 @@ import numpy as np
 # 导入宇树官方SDK
 from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelFactoryInitialize
 from unitree_sdk2py.b2.sport.sport_client import SportClient
+from unitree_sdk2py.b2.robot_state.robot_state_client import RobotStateClient
 from src.config.config import config
 from src.core.controller import Controller
 from src.utils.logger import logger
+from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_
+
 
 class B2Controller(Controller):
     """宇树B2机器狗控制器实现"""
     
     def __init__(self):
         """初始化B2控制器"""
-        self.sdk = None
+        self.sport_client = None
+        self.state_client = None
         self.connected = False
         self.current_mode = None
         self.last_heartbeat = 0
         self.heartbeat_interval = 0.1  # 100ms心跳间隔
+
+        # B2的一些信心变量
+        self._LowState = None
         
         # 线程安全锁
         self.lock = threading.Lock()
@@ -61,8 +68,13 @@ class B2Controller(Controller):
 
                 
                 if connect_result:
+                    self.sport_client = SportClient()
+                    self.sport_client.SetTimeout(10.0)
+                    self.sport_client.Init()
+                    self.state_client = RobotStateClient()
+                    self.state_client.Init()
                     self.connected = True
-                    self.current_mode = "idle"
+                    self.current_mode = "Damp"
                     self.last_heartbeat = time.time()
                     logger.info("Successfully connected to B2")
                     return True
@@ -90,9 +102,10 @@ class B2Controller(Controller):
                 self.stop()
                 
                 # 断开连接
-                if self.sdk:
-                    self.sdk.disconnect()
-                
+
+                # 这里具体的断连方式要后人的研究了，目前sdk里暂未发觉可以直接断连的接口
+                self.sport_client = None
+                self.state_client = None
                 self.connected = False
                 self.current_mode = None
                 logger.info("Disconnected from B2")
@@ -129,15 +142,20 @@ class B2Controller(Controller):
         try:
             with self.lock:
                 # 获取B2状态
-                b2_state = self.sdk.get_state()
-                
+                # 这里nacl在未拿到狗本体，未测试在state_client接口下的ServiceSwitch开启对应的服务后的结果是什么，
+                # 查看原码和官方的sdk描述也为发现具体的返回内容，因此笔者将自行从底层的rt/lowstate来获取数据，
+                # 在sdk中也有底层数据读取的例程unitree_sdk2py\test\lowlevel
+                def LowStateHandler(msg: LowState_):
+                    self._LowState = msg
+                sub = ChannelSubscriber("rt/lowstate", LowState_)
+                sub.Init(LowStateHandler,10)
+
                 return {
                     "connected": True,
-                    "status": "normal" if b2_state.system_state == 0 else "error",
+                    "status": "normal", #这里不正常还需要用故障码，有点复杂，留给后人
                     "mode": self.current_mode,
                     "battery": self.get_battery_level(),
                     "temperature": self.get_temperature(),
-                    "motor_count": len(b2_state.motor_states),
                     "timestamp": time.time()
                 }
         except Exception as e:
@@ -166,41 +184,44 @@ class B2Controller(Controller):
         try:
             with self.lock:
                 # 获取B2状态
-                b2_state = self.sdk.get_state()
+                def LowStateHandler(msg: LowState_):
+                    self._LowState = msg
+                sub = ChannelSubscriber("rt/lowstate", LowState_)
+                sub.Init(LowStateHandler,10)
                 
                 # 提取IMU数据
                 imu_data = {
                     "accelerometer": {
-                        "x": b2_state.imu.accelerometer[0],
-                        "y": b2_state.imu.accelerometer[1],
-                        "z": b2_state.imu.accelerometer[2]
+                        "x": self._LowState.imu_state.accelerometer[0],
+                        "y": self._LowState.imu.accelerometer[1],
+                        "z": self._LowState.imu.accelerometer[2]
                     },
                     "gyroscope": {
-                        "x": b2_state.imu.gyroscope[0],
-                        "y": b2_state.imu.gyroscope[1],
-                        "z": b2_state.imu.gyroscope[2]
+                        "x": self._LowState.imu.gyroscope[0],
+                        "y": self._LowState.imu.gyroscope[1],
+                        "z": self._LowState.imu.gyroscope[2]
                     },
                     "quaternion": {
-                        "w": b2_state.imu.quaternion[0],
-                        "x": b2_state.imu.quaternion[1],
-                        "y": b2_state.imu.quaternion[2],
-                        "z": b2_state.imu.quaternion[3]
+                        "w": self._LowState.imu.quaternion[0],
+                        "x": self._LowState.imu.quaternion[1],
+                        "y": self._LowState.imu.quaternion[2],
+                        "z": self._LowState.imu.quaternion[3]
                     },
                     "euler": {
-                        "roll": b2_state.imu.rpy[0],
-                        "pitch": b2_state.imu.rpy[1],
-                        "yaw": b2_state.imu.rpy[2]
+                        "roll": self._LowState.imu.rpy[0],
+                        "pitch": self._LowState.imu.rpy[1],
+                        "yaw": self._LowState.imu.rpy[2]
                     }
                 }
                 
                 # 提取电机数据
                 motor_data = {}
-                for i, motor in enumerate(b2_state.motor_states):
+                for i, motor in enumerate(self._LowState.motor_state):
                     motor_data[f"motor_{i}"] = {
-                        "angle": motor.angle,
-                        "speed": motor.speed,
-                        "torque": motor.torque,
-                        "temperature": motor.temperature
+                        "angle": motor.q,# 关机反馈位置信息：默认为弧度值（可按照实际情况改为角度值），可按照实际数值显示（弧度值范围：-7 - +7，显示3位小数）
+                        "speed": motor.dq,# 关节反馈速度
+                        "torque": motor.tau_est, # 关节力矩
+                        "temperature": motor.temperature # 电机温度
                     }
                 
                 # 提取其他传感器数据
@@ -208,11 +229,6 @@ class B2Controller(Controller):
                     "connected": True,
                     "imu": imu_data,
                     "motors": motor_data,
-                    "battery": {
-                        "voltage": b2_state.battery.voltage,
-                        "current": b2_state.battery.current,
-                        "level": self.get_battery_level()
-                    },
                     "timestamp": time.time()
                 }
                 
@@ -226,11 +242,11 @@ class B2Controller(Controller):
                 "timestamp": time.time()
             }
     
-    def move_forward(self, speed: float = 0.5, duration: float = 1.0) -> bool:
+    def move_forward(self, speed: float = 0.5, duration: float = 0.5) -> bool:
         """向前移动
         
         Args:
-            speed: 移动速度 (0.0-1.0)
+            speed: 移动速度 (-1.0-1.0)
             duration: 移动持续时间(秒)
             
         Returns:
@@ -242,16 +258,13 @@ class B2Controller(Controller):
             
         try:
             # 确保在行走模式
-            if self.current_mode not in ["walk", "trot", "gallop"]:
-                self.set_mode("walk")
+            if self.current_mode not in self.supported_modes:
+                self.set_mode("FreeWalk")
                 time.sleep(0.5)  # 等待模式切换完成
             
             # 设置前进速度
             with self.lock:
-                control = B2Control()
-                control.mode = B2Mode.WALK
-                control.velocity = [speed, 0, 0]  # x, y, yaw
-                self.sdk.send_control(control)
+                self.sport_client.Move(0.5, 0.0, 0.0)
             
             # 保持指定时间
             time.sleep(duration)
@@ -265,11 +278,11 @@ class B2Controller(Controller):
             logger.error(f"Failed to move forward: {str(e)}")
             return False
     
-    def move_backward(self, speed: float = 0.5, duration: float = 1.0) -> bool:
+    def move_backward(self, speed: float = 0.5, duration: float = 0.5) -> bool:
         """向后移动
         
         Args:
-            speed: 移动速度 (0.0-1.0)
+            speed: 移动速度 (-1.0-1.0)
             duration: 移动持续时间(秒)
             
         Returns:
@@ -281,16 +294,13 @@ class B2Controller(Controller):
             
         try:
             # 确保在行走模式
-            if self.current_mode not in ["walk", "trot", "gallop"]:
-                self.set_mode("walk")
+            if self.current_mode not in self.supported_modes:
+                self.set_mode("FreeWalk")
                 time.sleep(0.5)  # 等待模式切换完成
             
             # 设置后退速度
             with self.lock:
-                control = B2Control()
-                control.mode = B2Mode.WALK
-                control.velocity = [-speed, 0, 0]  # x, y, yaw
-                self.sdk.send_control(control)
+                self.sport_client.Move(-0.5, 0.0, 0.0)
             
             # 保持指定时间
             time.sleep(duration)
@@ -304,11 +314,11 @@ class B2Controller(Controller):
             logger.error(f"Failed to move backward: {str(e)}")
             return False
     
-    def turn_left(self, speed: float = 0.5, duration: float = 1.0) -> bool:
+    def turn_left(self, speed: float = 0.5, duration: float = 0.5) -> bool:
         """向左转
         
         Args:
-            speed: 旋转速度 (0.0-1.0)
+            speed: 旋转速度 (-1.0-1.0)
             duration: 旋转持续时间(秒)
             
         Returns:
@@ -320,16 +330,13 @@ class B2Controller(Controller):
             
         try:
             # 确保在行走模式
-            if self.current_mode not in ["walk", "trot", "gallop"]:
-                self.set_mode("walk")
+            if self.current_mode not in self.supported_modes:
+                self.set_mode("FreeWalk")
                 time.sleep(0.5)  # 等待模式切换完成
             
             # 设置左转速度
             with self.lock:
-                control = B2Control()
-                control.mode = B2Mode.WALK
-                control.velocity = [0, 0, speed]  # x, y, yaw
-                self.sdk.send_control(control)
+                self.sport_client.Move(0.0, 0.0, 0.5)
             
             # 保持指定时间
             time.sleep(duration)
@@ -343,11 +350,11 @@ class B2Controller(Controller):
             logger.error(f"Failed to turn left: {str(e)}")
             return False
     
-    def turn_right(self, speed: float = 0.5, duration: float = 1.0) -> bool:
+    def turn_right(self, speed: float = 0.5, duration: float = 0.5) -> bool:
         """向右转
         
         Args:
-            speed: 旋转速度 (0.0-1.0)
+            speed: 旋转速度 (-1.0-1.0)
             duration: 旋转持续时间(秒)
             
         Returns:
@@ -359,16 +366,13 @@ class B2Controller(Controller):
             
         try:
             # 确保在行走模式
-            if self.current_mode not in ["walk", "trot", "gallop"]:
-                self.set_mode("walk")
+            if self.current_mode not in self.supported_modes:
+                self.set_mode("FreeWalk")
                 time.sleep(0.5)  # 等待模式切换完成
             
             # 设置右转速度
             with self.lock:
-                control = B2Control()
-                control.mode = B2Mode.WALK
-                control.velocity = [0, 0, -speed]  # x, y, yaw
-                self.sdk.send_control(control)
+                self.sport_client.Move(0.0, 0.0, -0.5)
             
             # 保持指定时间
             time.sleep(duration)
@@ -394,13 +398,10 @@ class B2Controller(Controller):
             
         try:
             with self.lock:
-                control = B2Control()
-                control.mode = B2Mode.IDLE
-                control.velocity = [0, 0, 0]  # 停止所有运动
-                self.sdk.send_control(control)
+                self.sport_client.Damp()
             
             # 更新当前模式
-            self.current_mode = "idle"
+            self.current_mode = "Damp"
             
             return True
             
@@ -408,13 +409,11 @@ class B2Controller(Controller):
             logger.error(f"Failed to stop: {str(e)}")
             return False
     
-    def set_velocity(self, x: float, y: float, yaw: float) -> bool:
+    def set_velocity(self, level: int) -> bool:
         """设置速度
         
         Args:
-            x: X轴速度 (-1.0-1.0)
-            y: Y轴速度 (-1.0-1.0)
-            yaw: 偏航角速度 (-1.0-1.0)
+            level: 速度 (-1:低速 0:中速 1:高速)
             
         Returns:
             bool: 命令是否执行成功
@@ -425,16 +424,10 @@ class B2Controller(Controller):
             
         try:
             # 确保在行走模式
-            if self.current_mode not in ["walk", "trot", "gallop"]:
-                self.set_mode("walk")
-                time.sleep(0.5)  # 等待模式切换完成
             
             # 设置速度
             with self.lock:
-                control = B2Control()
-                control.mode = B2Mode.WALK
-                control.velocity = [x, y, yaw]
-                self.sdk.send_control(control)
+                self.sport_client.SpeedLevel(level)
             
             return True
             
@@ -463,12 +456,26 @@ class B2Controller(Controller):
         try:
             with self.lock:
                 # 根据动作名称执行不同的动作
-                if action_name == "sit":
-                    self.sdk.execute_action(B2Action.SIT)
+                # StandDown
+                if action_name == self.supported_actions[0]: 
+                    self.sport_client.StandDown()
+                
+                # stand_up
                 elif action_name == "stand_up":
-                    self.sdk.execute_action(B2Action.STAND_UP)
-                elif action_name == "lie_down":
-                    self.sdk.execute_action(B2Action.LIE_DOWN)
+                    self.sport_client.StandUp()
+                
+                # HandStand
+                elif action_name == "HandStand":
+                    self.sport_client.HandStand()
+                
+                # ContinuousGait
+                elif action_name == "ContinuousGait":
+                    self.sport_client.ContinuousGait()
+                # Euler
+                elif action_name == "Euler":
+                    self.sport_client.FreeEuler()
+                #后期可供扩展的动作
+                '''
                 elif action_name == "shake_head":
                     speed = params.get("speed", 1.0) if params else 1.0
                     duration = params.get("duration", 2.0) if params else 2.0
@@ -492,7 +499,7 @@ class B2Controller(Controller):
                         self.sdk.execute_action(B2Action.BACK_FLIP)
                     else:
                         self.sdk.execute_action(B2Action.FORWARD_FLIP)
-            
+                '''
             # 动作执行需要时间，等待完成
             time.sleep(3.0)  # 给动作执行留出时间
             
@@ -513,16 +520,10 @@ class B2Controller(Controller):
             
         try:
             with self.lock:
-                b2_state = self.sdk.get_state()
-                # 假设SDK返回的是电压值，需要转换为百分比
-                voltage = b2_state.battery.voltage
-                # 宇树B2电池电压范围通常在12.0V-16.8V之间
-                if voltage <= 12.0:
-                    return 0.0
-                elif voltage >= 16.8:
-                    return 100.0
-                else:
-                    return ((voltage - 12.0) / (16.8 - 12.0)) * 100.0
+
+               
+                return self._LowState.bms_state.soc
+                
                     
         except Exception as e:
             logger.error(f"Failed to get battery level: {str(e)}")
@@ -539,20 +540,20 @@ class B2Controller(Controller):
             
         try:
             with self.lock:
-                b2_state = self.sdk.get_state()
+                
                 
                 # 获取电机平均温度
-                motor_temps = [motor.temperature for motor in b2_state.motor_states]
+                motor_temps = [motor.temperature for motor in self._LowState.motor_state]
                 avg_motor_temp = sum(motor_temps) / len(motor_temps) if motor_temps else 0
                 
                 # 获取控制器温度
-                controller_temp = b2_state.temperature.controller
+                controller_temp = self._LowState.temperature_ntc1
                 
                 return {
                     "motor_average": avg_motor_temp,
                     "controller": controller_temp,
-                    "imu": b2_state.temperature.imu,
-                    "battery": b2_state.temperature.battery
+                    "imu": self._LowState.imu_state.temperature,
+                    "battery": sum(self._LowState.bms_state.bq_ntc)/2
                 }
                 
         except Exception as e:
@@ -579,24 +580,17 @@ class B2Controller(Controller):
         try:
             with self.lock:
                 # 根据模式名称设置不同的模式
-                if mode == "idle":
-                    self.sdk.set_mode(B2Mode.IDLE)
-                elif mode == "stand":
-                    self.sdk.set_mode(B2Mode.STAND)
-                elif mode == "walk":
-                    self.sdk.set_mode(B2Mode.WALK)
-                elif mode == "trot":
-                    self.sdk.set_mode(B2Mode.TROT)
-                elif mode == "gallop":
-                    self.sdk.set_mode(B2Mode.GALLOP)
-                elif mode == "climb_stairs":
-                    self.sdk.set_mode(B2Mode.CLIMB_STAIRS)
-                elif mode == "避障模式":
-                    self.sdk.set_mode(B2Mode.OBSTACLE_AVOIDANCE)
-                elif mode == "跟随模式":
-                    self.sdk.set_mode(B2Mode.FOLLOW)
-                elif mode == "导航模式":
-                    self.sdk.set_mode(B2Mode.NAVIGATION)
+                if mode == "Damp":
+                    self.sport_client.Damp()
+                elif mode == "FreeWalk":
+                    self.sport_client.FreeWalk()
+                elif mode == "ClassicWalk":
+                    self.sport_client.ClassicWalk()
+                elif mode == "FastWalk":
+                    self.sport_client.FastWalk()
+                elif mode == "VisionWalk":
+                    self.sport_client.VisionWalk()
+
             
             # 更新当前模式
             self.current_mode = mode
@@ -631,7 +625,7 @@ class B2Controller(Controller):
         try:
             with self.lock:
                 # 重置B2
-                self.sdk.reset()
+                self.sport_client.StopMove()
             
             # 等待重置完成
             time.sleep(5.0)
@@ -652,10 +646,7 @@ class B2Controller(Controller):
                 try:
                     with self.lock:
                         # 发送心跳包（可以是一个空的控制命令）
-                        control = B2Control()
-                        control.mode = B2Mode.IDLE  # 保持空闲模式
-                        control.velocity = [0, 0, 0]
-                        self.sdk.send_control(control)
+                        
                         
                         # 更新心跳时间
                         self.last_heartbeat = time.time()
