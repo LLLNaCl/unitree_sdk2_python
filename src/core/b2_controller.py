@@ -1,6 +1,12 @@
 
 # B2控制器实现（与宇树SDK交互的核心）
-# 这个文件中有AI生成的幻觉，需要继续修改
+'''
+实习生写python的工程代码经验有限，代码框架是AI写的，原始有很多的幻觉部分。
+希望能有所用处（大概率可能看到后面的你可能不会这样写？）
+一些自定义的DDS类内变量不知是否能用'.'调用，本人之前写C++会多一点，可能python这样写有点问题？
+
+'''
+
 import time
 import threading
 from typing import Dict, Any, Optional, List, Tuple
@@ -385,7 +391,79 @@ class B2Controller(Controller):
         except Exception as e:
             logger.error(f"Failed to turn right: {str(e)}")
             return False
+        
+    def left_move(self, speed: float = 0.5, duration: float = 0.5) -> bool:
+        """向左平移
+        
+        Args:
+            speed: 移动速度 (-1.0-1.0)
+            duration: 移动持续时间(秒)
+            
+        Returns:
+            bool: 命令是否执行成功
+        """
+        if not self.is_connected():
+            logger.error("Not connected to B2")
+            return False
+            
+        try:
+            # 确保在行走模式
+            if self.current_mode not in self.supported_modes:
+                self.set_mode("FreeWalk")
+                time.sleep(0.5)  # 等待模式切换完成
+            
+            # 设置左移速度
+            with self.lock:
+                self.sport_client.Move(0.0, 0.3, 0.0)
+            
+            # 保持指定时间
+            time.sleep(duration)
+            
+            # 停止
+            self.stop()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to move left: {str(e)}")
+            return False
     
+    def right_move(self, speed: float = 0.5, duration: float = 0.5) -> bool:
+        """向右平移
+        
+        Args:
+            speed: 移动速度 (-1.0-1.0)
+            duration: 移动持续时间(秒)
+            
+        Returns:
+            bool: 命令是否执行成功
+        """
+        if not self.is_connected():
+            logger.error("Not connected to B2")
+            return False
+            
+        try:
+            # 确保在行走模式
+            if self.current_mode not in self.supported_modes:
+                self.set_mode("FreeWalk")
+                time.sleep(0.5)  # 等待模式切换完成
+            
+            # 设置右移速度
+            with self.lock:
+                self.sport_client.Move(0.0, -0.3, 0.0)
+            
+            # 保持指定时间
+            time.sleep(duration)
+            
+            # 停止
+            self.stop()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to turn right: {str(e)}")
+            return False
+
     def stop(self) -> bool:
         """停止移动
         
@@ -522,7 +600,7 @@ class B2Controller(Controller):
             with self.lock:
 
                
-                return self._LowState.bms_state.soc
+                return self._LowState.bms_state.soc # 这里我认为C++是这样写的，python这里不知道为何关联不到。。
                 
                     
         except Exception as e:
