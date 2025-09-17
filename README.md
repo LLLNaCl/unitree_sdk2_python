@@ -78,3 +78,9 @@ unitree_b2_cloud_sdk/
 4. **适配层**：
    - b2_controller.py作为适配层，将宇树SDK的API转换为统一的接口
    - 所有服务模块通过控制器间接使用宇树SDK，降低耦合度
+
+# Installation
+与宇树原始readme.md相同
+
+# Attention
+只是编写了一下框架，内容大多还有问题嗯。。。有些文件空，有些文件可能有幻觉。但是b2_controller.py基本是笔者过了一遍的

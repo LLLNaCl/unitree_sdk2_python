@@ -17,5 +17,7 @@ setup(name='unitree_sdk2py',
             "cyclonedds==0.10.2",
             "numpy",
             "opencv-python",
+            "psutil",
+            "paho-mqtt"
       ],
       )
